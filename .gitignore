@@ -1,6 +1,21 @@
-# ModelSim junk
-work/
-*.wlf
-transcript
-*.mpf
-*.mti
+# This is a VHDL code file.
+# The following lines specify the files to be cleaned up by the ModelSim simulation tool.
+
+# 'work' is the working library in ModelSim.
+# '*.wlf' are waveform files generated during simulation.
+# 'transcript' is the text file containing the simulation output.
+# '*.mpf' and '*.mti' are project files and annotations, respectively.
+
+# Using a list makes it easier to add or remove file types in the future.
+file_types = [
+    "*.wlf",
+    "transcript",
+    "*.mpf",
+    "*.mti"
+]
+
+# Join the file types with a space and put them in a single string.
+files_to_clean = " ".join(file_types)
+
+# Print the cleaned-up list of files.
+print(files_to_clean)
