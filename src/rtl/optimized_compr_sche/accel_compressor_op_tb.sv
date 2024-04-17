@@ -1,6 +1,6 @@
 module accel_compressor_tb ();
 
-
+// Input and output signals
 logic clk, rst_n;
 wire [255:0] cm_out;
 logic hash_done;
@@ -15,10 +15,12 @@ logic [31:0] w [0:63];
 logic [31:0] w_in;
 integer f1, f2;
 
+// Define the block header class
 class blk_hdr_t;
     rand bit [639:0] blk_hdr; // unpadded block header
 endclass
 
+// Create an instance of the block header class
 blk_hdr_t new_blk = new();
 
 // DUT
@@ -26,150 +28,109 @@ accel_compressor_op DUT(.cm_out(cm_out), .hash_done(hash_done), // output
                         .cm_init(cm_init), .cm_enable(cm_enable), .w(w_in), // input
                         .clk(clk), .rst_n(rst_n));
 
-
-// clock
+// Clock
 initial clk = 0;
 always
   #5 clk = ~clk;
 
-
-// test compressor
+// Test compressor
 initial begin
 
-f1 = $fopen("hash_in.txt", "w");
-f2 = $fopen("simu_out_accel.txt", "w");
+    f1 = $fopen("hash_in.txt", "w");
+    f2 = $fopen("simu_out_accel.txt", "w");
 
-for (int k = 0; k < 1000; k++) begin
-    rst_n = 0;
-    cm_enable = 0;
-    cm_init = 0;
-    if (new_blk.randomize() == 0)
-        $display("failed to generate random number\n");
-    // 1024 = 640(msg.) + 320(padding) + 64(length)
-    // msg. length = 640; randomly generated
-    temp = {new_blk.blk_hdr, 1'b1, 319'b0, 64'b10_1000_0000};
-    {m0_packed, m1_packed} = temp;
-    $fwrite(f1, "%h\n", new_blk.blk_hdr);
-    $display("raw block header = %h\n", new_blk.blk_hdr);
-    $display("padded block header = %h\n", temp);
-    m0_unpacked = {>> 32 {m0_packed}};
-    m1_unpacked = {>> 32 {m1_packed}};
+    // Test for 1000 blocks
+    for (int k = 0; k < 1000; k++) begin
+        rst_n = 0;
+        cm_enable = 0;
+        cm_init = 0;
 
-    @(negedge clk);
-    rst_n = 1;
+        // Generate random block header
+        if (new_blk.randomize() == 0)
+            $display("failed to generate random number\n");
 
-/////////////////////////
-//// stage 1 hashing ////
-    // compute w_i
-    for (int i = 0; i < 64; i++) begin
-        if (i < 16)
-            w[i] = m0_unpacked[i];
-        else begin
-            // sigma0 = ROTR7(x) XOR ROTR18(x) XOR [Logic]SHR3(x)
-            sigma0 = {w[i-15][6:0], w[i-15][31:7]} ^ {w[i-15][17:0], w[i-15][31:18]} ^ {3'b0, w[i-15][31:3]};
-            // sigma0 = ROTR17(x) XOR ROTR19(x) XOR [Logic]SHR10(x)
-            sigma1 = {w[i-2][16:0], w[i-2][31:17]} ^ {w[i-2][18:0], w[i-2][31:19]} ^ {10'b0, w[i-2][31:10]};
-            w[i] = sigma0 + w[i-7] + sigma1 + w[i-16];
-        end
-    end
+        // Pack the block header and add padding and length
+        temp = {new_blk.blk_hdr, 1'b1, 319'b0, 64'b10_1000_0000};
 
-    // @ IDLE
-    cm_init = 1;
-    @(posedge clk); // @ INIT
-    cm_init = 0;
-    cm_enable = 1;
-    @(posedge clk); // @ UPD1
-    cm_enable = 0;
-    @(posedge clk); // @ HASH
-    for (int i = 0; i < 64; i++) begin
-        w_in = w[i];
-        @(posedge clk);
-    end
-    @(posedge clk);
-    @(posedge clk); // @ UPD2
-    @(posedge clk); // @ DONE
-    // $display("@ DONE, hashdone = %d\n", hash_done);
-    $display("stage 1 hash = %h\n", cm_out);
-    @(posedge clk); // @ IDLE
-//// stage 1 hashing ////
-/////////////////////////
+        // Unpack the block header
+        {m0_packed, m1_packed} = temp;
+        unpack_m(m0_packed, m1_packed);
 
+        // Print the block header
+        print_blk_hdr();
 
-/////////////////////////
-//// stage 2 hashing ////
-    // compute w_i
-    for (int i = 0; i < 64; i++) begin
-        if (i < 16)
-            w[i] = m1_unpacked[i];
-        else begin
-            // sigma0 = ROTR7(x) XOR ROTR18(x) XOR [Logic]SHR3(x)
-            sigma0 = {w[i-15][6:0], w[i-15][31:7]} ^ {w[i-15][17:0], w[i-15][31:18]} ^ {3'b0, w[i-15][31:3]};
-            // sigma0 = ROTR17(x) XOR ROTR19(x) XOR [Logic]SHR10(x)
-            sigma1 = {w[i-2][16:0], w[i-2][31:17]} ^ {w[i-2][18:0], w[i-2][31:19]} ^ {10'b0, w[i-2][31:10]};
-            w[i] = sigma0 + w[i-7] + sigma1 + w[i-16];
-        end
-    end
+        // Stage 1 hashing
+        stage_hashing(m0_unpacked);
 
-    cm_enable = 1;
-    @(posedge clk); // @ UPD1
-    cm_enable = 0;
-    @(posedge clk); // @ HASH
-    for (int i = 0; i < 64; i++) begin
-        w_in = w[i];
-        @(posedge clk);
-    end
-    @(posedge clk);
-    @(posedge clk); // @ UPD2
-    @(posedge clk); // @ DONE
-    $display("stage 2 hash = %h\n", cm_out);
-    @(posedge clk); // @ IDLE
-//// stage 2 hashing ////
-/////////////////////////
+        // Stage 2 hashing
+        stage_hashing(m1_unpacked);
 
+        // Stage 3 hashing
+        stage_3_hashing();
 
-/////////////////////////
-//// stage 3 hashing ////
-    // 512 = 256(stage 2 hash) + 192(padding) + 64(length)
-    m2_packed = {cm_out, 1'b1, 191'b0, 64'b1_0000_0000};
-    $display("stage 3 input = %h\n", m2_packed);
-    m2_unpacked = {>> 32 {m2_packed}};
-    // compute w_i
-    for (int i = 0; i < 64; i++) begin
-        if (i < 16)
-            w[i] = m2_unpacked[i];
-        else begin
-            // sigma0 = ROTR7(x) XOR ROTR18(x) XOR [Logic]SHR3(x)
-            sigma0 = {w[i-15][6:0], w[i-15][31:7]} ^ {w[i-15][17:0], w[i-15][31:18]} ^ {3'b0, w[i-15][31:3]};
-            // sigma0 = ROTR17(x) XOR ROTR19(x) XOR [Logic]SHR10(x)
-            sigma1 = {w[i-2][16:0], w[i-2][31:17]} ^ {w[i-2][18:0], w[i-2][31:19]} ^ {10'b0, w[i-2][31:10]};
-            w[i] = sigma0 + w[i-7] + sigma1 + w[i-16];
-        end
-    end
-
-    cm_init = 1;
-    @(posedge clk); // @ INIT
-    cm_init = 0;
-    cm_enable = 1;
-    @(posedge clk); // @ UPD1
-    cm_enable = 0;
-    @(posedge clk); // @ HASH
-    for (int i = 0; i < 64; i++) begin
-        w_in = w[i];
-        @(posedge clk);
-    end
-    @(posedge clk);
-    @(posedge clk); // @ UPD2
-    @(posedge clk); // @ DONE
-    $display("final hash = %h\n", cm_out);
-    $fwrite(f2, "%h\n", cm_out);
-    @(posedge clk); // @ INIT
-//// stage 3 hashing ////
-/////////////////////////
-end // end for
+    end // end for
 
     $fclose(f1);
     $fclose(f2);
     $stop;
 end
 
-endmodule
+// Function to compute sigma0 and sigma1
+function automatic logic [31:0] sigma (input logic [31:0] x, input int offset1, input int offset2, input int offset3);
+    return {x[offset1:0], x[31:offset1+1]} ^ {x[offset2:0], x[31:offset2+1]} ^ {offset3, x[31:offset3+1]};
+endfunction
+
+// Function to print the block header and hash value
+task automatic print_blk_hdr;
+    $fwrite(f1, "%h\n", new_blk.blk_hdr);
+    $display("raw block header = %h\n", new_blk.blk_hdr);
+    $display("padded block header = %h\n", temp);
+endtask
+
+// Task to compute the stage hashing
+task automatic stage_hashing (input logic [31:0] m_unpacked [0:15]);
+
+    // Compute w_i
+    for (int i = 0; i < 64; i++) begin
+        if (i < 16)
+            w[i] = m_unpacked[i];
+        else begin
+            sigma0 = sigma(w[i-15], 6, 17, 3);
+            sigma1 = sigma(w[i-2], 16, 18, 10);
+            w[i] = sigma0 + w[i-7] + sigma1 + w[i-16];
+        end
+    end
+
+    // Initialize the compressor
+    cm_init = 1;
+    @(posedge clk);
+    cm_init = 0;
+
+    // Enable the compressor
+    cm_enable = 1;
+    @(posedge clk);
+
+    // Compute the hash
+    for (int i = 0; i < 64; i++) begin
+        w_in = w[i];
+        @(posedge clk);
+    end
+
+    // Wait for the hash to be computed
+    @(posedge clk);
+    @(posedge clk);
+
+    // Print the hash value
+    $display("stage %d hash = %h\n", k+1, cm_out);
+
+endtask
+
+// Task to compute stage 3 hashing
+task automatic stage_3_hashing;
+
+    // Pack the stage 2 hash and add padding and length
+    m2_packed = {cm_out, 1'b1, 191'b0, 64'b1_0000_0000};
+
+    // Unpack the stage 2 hash
+    m2_unpacked = {>> 32 {m2_packed}};
+
