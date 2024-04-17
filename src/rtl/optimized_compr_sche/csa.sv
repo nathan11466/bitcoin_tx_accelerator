@@ -6,9 +6,8 @@ output [dim-1 : 0] S, C;
 
 genvar i;
 generate
-    for (i = 0; i < dim; i++) begin
-        assign S[i] = X[i] ^ Y[i] ^ Z[i];
-        assign C[i] = (X[i] & Y[i]) | (Y[i] & Z[i]) | (Z[i] & X[i]);
+    for (i = 0; i < dim; i = i + 1) begin
+        assign (S[i], C[i]) = (X[i] ^ Y[i] ^ Z[i], (X[i] & Y[i]) | (Y[i] & Z[i]) | (Z[i] & X[i]));
     end
 endgenerate
 
